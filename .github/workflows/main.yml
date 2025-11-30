@@ -1,4 +1,4 @@
-name: RDP Setup + Fixed Name + VRDP
+name: RDP + Call Operator Fix + VRDP
 
 on:
   workflow_dispatch:
@@ -9,10 +9,13 @@ jobs:
     timeout-minutes: 3600
 
     steps:
+      # ==========================================
+      # PHASE 1: PREP & RDP
+      # ==========================================
       - name: Checkout Repository
         uses: actions/checkout@v2
 
-      - name: Configure Core RDP Settings & Firewall
+      - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
@@ -33,7 +36,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Administrator" -ErrorAction SilentlyContinue
           echo "RDP_CREDS=$password" >> $env:GITHUB_ENV
 
-      - name: Keep Administrator Session Active
+      - name: Keep Session Active
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fResetBroken" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "IdleTimeout" -Value 0
@@ -65,75 +68,85 @@ jobs:
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
+      # ==========================================
+      # PHASE 2: INSTALLATION (Using Native Call Operator)
+      # ==========================================
       - name: Set VirtualBox Global Config Path
         run: |
           New-Item -Path "C:\VirtualBoxConfig" -ItemType Directory -Force
           [Environment]::SetEnvironmentVariable("VBOX_USER_HOME", "C:\VirtualBoxConfig", "Machine")
 
-      - name: Download VBox 7.2.4, Custom ExtPack and OVA
+      - name: Download VirtualBox + Correct Extension Pack
         run: |
-          $dest = "C:\Users\Administrator\Desktop\Public"
+          $dest = "$env:USERPROFILE\Downloads"
           if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+          Write-Host "Files will be saved to: $dest"
 
-          Write-Host "Downloading OVA..."
-          Invoke-WebRequest `
-            -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Nadeem.ova" `
-            -OutFile "$dest\Nadeem.ova" `
-            -UseBasicParsing
-
-          Write-Host "Downloading VirtualBox 7.2.4 Installer..."
+          Write-Host "Downloading VirtualBox Installer..."
           Invoke-WebRequest `
             -Uri "https://download.virtualbox.org/virtualbox/7.2.4/VirtualBox-7.2.4-170995-Win.exe" `
             -OutFile "$dest\VirtualBox-Installer.exe" `
             -UseBasicParsing
 
-          Write-Host "Downloading Custom Extension Pack (With Exact Name)..."
-          # FIXED: Using spaces in filename to match the XML error log exactly
+          Write-Host "Downloading Extension Pack (Corrected)..."
           Invoke-WebRequest `
-            -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/pack/Oracle_VirtualBox_Extension_Pack-7.2.4%20(2).vbox-extpack" `
-            -OutFile "$dest\Oracle VirtualBox Extension Pack.vbox-extpack" `
+            -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" `
+            -OutFile "$dest\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" `
             -UseBasicParsing
 
-      - name: Install VirtualBox & Custom Extension Pack
+      - name: Install VirtualBox & Extension Pack
         run: |
-          $vbInstaller = "C:\Users\Administrator\Desktop\Public\VirtualBox-Installer.exe"
-          # FIXED: Updated variable to match the new filename with spaces
-          $extPack = "C:\Users\Administrator\Desktop\Public\Oracle VirtualBox Extension Pack.vbox-extpack"
+          $dest = "$env:USERPROFILE\Downloads"
+          $vbInstaller = "$dest\VirtualBox-Installer.exe"
+          $extPack = "$dest\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
           
-          Write-Host "Installing VirtualBox 7.2.4..."
+          Write-Host "Installing VirtualBox..."
           Start-Process -FilePath $vbInstaller -ArgumentList "--silent --ignore-reboot --msiparams ALLUSERS=2" -Wait
           
           $env:Path += ";C:\Program Files\Oracle\VirtualBox"
+          $VBoxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
           
-          if (Test-Path "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe") {
+          if (Test-Path $VBoxManage) {
              Write-Host "VirtualBox installed. Installing Extension Pack..."
              
-             # The 'echo y' pipe accepts the license agreement automatically
-             cmd /c "echo y | VBoxManage extpack install --replace `"$extPack`""
-             
-             # Verify installation
-             VBoxManage list extpacks
+             & $VBoxManage extpack install --replace $extPack --accept-license=56adf0d4f1ba0e3f3372bd3c79d0f8b9
+
+             Write-Host "Extension Packs Installed:"
+             & $VBoxManage list extpacks
           } else {
              Write-Error "VirtualBox installation failed."
              exit 1
           }
 
+      # ==========================================
+      # PHASE 3: VM DEPLOYMENT
+      # ==========================================
+      - name: Download OVA
+        run: |
+          $dest = "$env:USERPROFILE\Downloads"
+          Write-Host "Downloading OVA to $dest..."
+          Invoke-WebRequest `
+            -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Nadeem.ova" `
+            -OutFile "$dest\Nadeem.ova" `
+            -UseBasicParsing
+
       - name: Import and Enable VRDP
         run: |
           $VBoxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
-          $ovaPath = "C:\Users\Administrator\Desktop\Public\Nadeem.ova"
+          $dest = "$env:USERPROFILE\Downloads"
+          $ovaPath = "$dest\Nadeem.ova"
           $vmName = "NadeemVM"
 
           Write-Host "Importing OVA..."
           & $VBoxManage import "$ovaPath" --vsys 0 --vmname "$vmName" --eula accept
           
-          Write-Host "Enabling VRDP (Remote Display) on Port 33389..."
+          Write-Host "Enabling VRDP on Port 33389..."
           & $VBoxManage modifyvm "$vmName" --vrde on
           & $VBoxManage modifyvm "$vmName" --vrdeport 33389
           & $VBoxManage modifyvm "$vmName" --vrdeaddress 0.0.0.0
           & $VBoxManage modifyvm "$vmName" --vrdeauthtype null
           
-          Write-Host "Starting VM in Headless Mode..."
+          Write-Host "Starting VM..."
           & $VBoxManage startvm "$vmName" --type headless
 
           Start-Sleep -Seconds 10
@@ -144,14 +157,7 @@ jobs:
           Write-Host "`n=============================================="
           Write-Host "       VRDP CONNECTION DETAILS"
           Write-Host "=============================================="
-          Write-Host "Target IP: $($env:TAILSCALE_IP)"
-          Write-Host "Target Port: 33389"
-          Write-Host ""
-          Write-Host "INSTRUCTIONS:"
-          Write-Host "1. On your local PC, open Remote Desktop Connection."
-          # FIXED: Added parentheses to ensure variable expands correctly
-          Write-Host "2. Connect to: $($env:TAILSCALE_IP):33389"
-          Write-Host "3. You will see the VM boot screen instantly."
+          Write-Host "Target: $($env:TAILSCALE_IP):33389"
           Write-Host "==============================================`n"
           while ($true) {
               Start-Sleep -Seconds 300
