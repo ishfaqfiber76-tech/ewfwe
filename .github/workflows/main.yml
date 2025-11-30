@@ -69,18 +69,17 @@ jobs:
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
       # ==========================================
-      # PHASE 2: INSTALLATION (Using Native Call Operator)
+      # PHASE 2: INSTALLATION (VirtualBox & Extension Pack)
       # ==========================================
       - name: Set VirtualBox Global Config Path
         run: |
           New-Item -Path "C:\VirtualBoxConfig" -ItemType Directory -Force
           [Environment]::SetEnvironmentVariable("VBOX_USER_HOME", "C:\VirtualBoxConfig", "Machine")
 
-      - name: Download VirtualBox + Correct Extension Pack
+      - name: Download VirtualBox Installer & Extension Pack
         run: |
           $dest = "$env:USERPROFILE\Downloads"
           if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
-          Write-Host "Files will be saved to: $dest"
 
           Write-Host "Downloading VirtualBox Installer..."
           Invoke-WebRequest `
@@ -88,34 +87,29 @@ jobs:
             -OutFile "$dest\VirtualBox-Installer.exe" `
             -UseBasicParsing
 
-          Write-Host "Downloading Extension Pack (Corrected)..."
-          Invoke-WebRequest `
-            -Uri "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" `
-            -OutFile "$dest\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" `
-            -UseBasicParsing
+          Write-Host "Downloading Extension Pack with exact filename..."
+          curl -L -o "$dest\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack" "https://pub-4e3db5ccea8a4f30ae7d4ee15e71f566.r2.dev/Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
 
       - name: Install VirtualBox & Extension Pack
         run: |
           $dest = "$env:USERPROFILE\Downloads"
           $vbInstaller = "$dest\VirtualBox-Installer.exe"
           $extPack = "$dest\Oracle_VM_VirtualBox_Extension_Pack-7.2.4.vbox-extpack"
-          
+
           Write-Host "Installing VirtualBox..."
           Start-Process -FilePath $vbInstaller -ArgumentList "--silent --ignore-reboot --msiparams ALLUSERS=2" -Wait
-          
+
           $env:Path += ";C:\Program Files\Oracle\VirtualBox"
           $VBoxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
-          
-          if (Test-Path $VBoxManage) {
-             Write-Host "VirtualBox installed. Installing Extension Pack..."
-             
-             & $VBoxManage extpack install --replace $extPack --accept-license=56adf0d4f1ba0e3f3372bd3c79d0f8b9
 
-             Write-Host "Extension Packs Installed:"
-             & $VBoxManage list extpacks
+          if (Test-Path $VBoxManage) {
+              Write-Host "VirtualBox installed. Installing Extension Pack..."
+              & $VBoxManage extpack install --replace $extPack --accept-license=56adf0d4f1ba0e3f3372bd3c79d0f8b9
+              Write-Host "Installed Extension Packs:"
+              & $VBoxManage list extpacks
           } else {
-             Write-Error "VirtualBox installation failed."
-             exit 1
+              Write-Error "VirtualBox installation failed."
+              exit 1
           }
 
       # ==========================================
@@ -139,13 +133,13 @@ jobs:
 
           Write-Host "Importing OVA..."
           & $VBoxManage import "$ovaPath" --vsys 0 --vmname "$vmName" --eula accept
-          
+
           Write-Host "Enabling VRDP on Port 33389..."
           & $VBoxManage modifyvm "$vmName" --vrde on
           & $VBoxManage modifyvm "$vmName" --vrdeport 33389
           & $VBoxManage modifyvm "$vmName" --vrdeaddress 0.0.0.0
           & $VBoxManage modifyvm "$vmName" --vrdeauthtype null
-          
+
           Write-Host "Starting VM..."
           & $VBoxManage startvm "$vmName" --type headless
 
